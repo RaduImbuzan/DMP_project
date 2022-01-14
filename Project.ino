@@ -31,48 +31,56 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 #define font_width_pixels 5
 #define font_height_pixels 7
 
-unsigned int seconds = 0, minutes = 44, hours = 15;
+unsigned int seconds = 55, minutes = 59, hours = 23;
+unsigned int day = 30, month = 12, year = 1000;
+
 unsigned int lastSecond = 61;
 char secondString[] = "00";
 char minuteString[] = "00";
 char hourString[] = "00";
-char time[9];
-char timeUpdateMask = 0;
-
-unsigned int day = 0, month = 0, year = 0;
 char dayString[] = "00";
 char monthString[] = "00";
 char yearString[] = "0000";
+
+char timeUpdateMask = 0;
+bool dateStringUpdate = 0;
+char time[9];
 char date[11];
 
+// Temperature and humidity variables
 float currentTemperature, pastTemperature;
 float currentHumidity, pastHumidity;
 
-/// Buttons pins
+// Command from Serial Monitor
+String command = "";
+boolean commandComplete = false;
+
+/// Control buttons
 const int setupPin = 3;
-const int increaseMinutesPin = 4;
-const int increaseHoursPin = 5;
+int isInSetupState = 0;
 
-int inSetupState = 0;
-int increaseMinutesButtonState;
-int lastIncreaseMinutesButtonState = LOW;
+const int incButtonPin1 = 4;
+const int incButtonPin2 = 5;
 
-int increaseHoursButtonState;
-int lastIncreaseHoursButtonState = LOW;
-
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 50;
+const int buttonPin[2] = {incButtonPin1, incButtonPin2};
+int buttonState[2];
+int lastButtonState[2] = {LOW, LOW};
+unsigned long lastDebounceTime[2] = {0, 0};
+unsigned long debounceDelay = 60;
 
 void setup() {
   Serial.begin(9600);
 
+  command.reserve(200);
+
   Timer1.initialize(1000000);
   Timer1.attachInterrupt(incrementSeconds);
 
+  /// Attach interrupt to the setup pin
   attachInterrupt(digitalPinToInterrupt(setupPin), changeSetupState, RISING);
 
-  pinMode(increaseMinutesPin, INPUT);
-  pinMode(increaseHoursPin, INPUT);
+  pinMode(incButtonPin1, INPUT);
+  pinMode(incButtonPin2, INPUT);
 
   // Init the TFT display
   tft.initR(INITR_GREENTAB);
@@ -80,33 +88,157 @@ void setup() {
 
   dht.begin();
 
-  intToString(hours, hourString);
-  intToString(minutes, minuteString);
-  intToString(seconds, secondString);
+  intToString(hours, hourString, 2);
+  intToString(minutes, minuteString, 2);
+  intToString(seconds, secondString, 2);
+
+  intToString(day, dayString, 2);
+  intToString(month, monthString, 2);
+  intToString(year, yearString, 4);
 
   sprintf(time, "%s:%s:%s", hourString, minuteString, secondString);
   sprintf(date, "%s/%s/%s", dayString, monthString, yearString);
 }
 
 void loop() {
-  if (!inSetupState)
-  {
-    if (lastSecond != seconds) {
-      displayTimeAndDate();
-      displayTemperature();
-      displayHumidity();
+  if (commandComplete) { // Check if command received
+    char char_command[200];
+    command.toCharArray(char_command, command.length() + 1);
 
-      lastSecond = seconds;
-    }
+    executeCommand(char_command);
+
+
+    command = "";
+    commandComplete = false;
   }
   else {
-    updateIncreaseMinutesButtonState();
-    updateIncreaseHourButtonState();
+    if (!isInSetupState)
+    {
+      if (lastSecond != seconds) {
+        displayTimeAndDate();
+        displayTemperature();
+        displayHumidity();
+
+        lastSecond = seconds;
+      }
+    }
+    else {
+      debounce(0);
+      debounce(1);
+    }
   }
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    char inChar = (char)Serial.read();
+
+    if (inChar != '\n')
+      command += inChar;
+
+    if (inChar == '\n') {
+      commandComplete = true;
+    }
+  }
+}
+
+void executeCommand(char commandString[]) {
+  char* pch;
+  pch = strtok(commandString, " ");
+
+  int counter = 0;
+
+  char command[20];
+  char parameter[20];
+
+  // extract the command and the parameter strings from the received command
+  while (pch != NULL)
+  {
+    if (counter == 0) {
+      strcpy(command, pch);
+      counter++;
+    }
+    else {
+      strcpy(parameter, pch);
+    }
+    pch = strtok (NULL, " ");
+  }
+
+  if (strcmp(command, "setDay") == 0)
+  {
+    int newDay = atoi(parameter);
+    if (newDay >= 1 && newDay <= 31)
+    {
+      strcpy(dayString, parameter);
+      day = newDay;
+    }
+  }
+  else if (strcmp(command, "setMonth") == 0)
+  {
+    int newMonth = atoi(parameter);
+    if (newMonth >= 1 && newMonth <= 12)
+    {
+      strcpy(monthString, parameter);
+      month = newMonth;
+    }
+  }
+  else if (strcmp(command, "setYear") == 0)
+  {
+    int newYear = atoi(parameter);
+    if (newYear >= 1000 && newYear <= 9999)
+    {
+      strcpy(yearString, parameter);
+      year = newYear;
+    }
+  }
+
+  clearCharPosition(date_text_position_x, date_text_position_y, 128, font_height_pixels);
+  sprintf(date, "%s/%s/%s", dayString, monthString, yearString);
+  tft.setCursor(date_text_position_x, date_text_position_y);
+  tft.print(date);
+}
+
+void debounce(int buttonNumber) {
+  int reading = digitalRead(buttonPin[buttonNumber]);
+
+  if (reading != lastButtonState[buttonNumber]) {
+    lastDebounceTime[buttonNumber] = millis();
+  }
+
+  if ((millis() - lastDebounceTime[buttonNumber]) > debounceDelay) {
+    if (reading != buttonState[buttonNumber]) {
+      buttonState[buttonNumber] = reading;
+
+      if (buttonState[buttonNumber] == HIGH) {
+        buttonPressed(buttonNumber);
+      }
+    }
+  }
+  lastButtonState[buttonNumber] = reading;
+}
+
+void buttonPressed(int buttonNumber) {
+  if (buttonNumber == 0) { // Increase minutes
+    minutes = (minutes + 1) % 60;
+
+    intToString(minutes, minuteString, 2);
+  } else if (buttonNumber = 1) { // Increase hour
+    hours = (hours + 1) % 24;
+
+    intToString(hours, hourString, 2);
+  }
+
+  // Print the new time on the display
+  sprintf(time, "%s:%s:%s", hourString, minuteString, secondString);
+  clearCharPosition(0, time_text_position_y, 128, font_height_pixels);
+  tft.setCursor(time_text_position_x, time_text_position_y);
+
+  tft.print(time);
 }
 
 void incrementSeconds() {
   timeUpdateMask = 0;
+  dateStringUpdate = 0;
 
   seconds += 1;
   timeUpdateMask = timeUpdateMask | 1;
@@ -123,38 +255,67 @@ void incrementSeconds() {
       timeUpdateMask = timeUpdateMask | 4;
 
       minutes = 0;
-      intToString(hours, hourString);
-    }
-    intToString(minutes, minuteString);
-  }
-  intToString(seconds, secondString);
+      intToString(hours, hourString, 2);
 
+      if (hours >= 24) {
+        hours = 0;
+        day++;
+
+        if (day >= 31) {
+          day = 1;
+          month++;
+
+          if (month >= 13)
+          {
+            month = 1;
+            year++;
+
+            intToString(year, yearString, 4);
+            dateStringUpdate = 1;
+          }
+
+          intToString(month, monthString, 2);
+          dateStringUpdate = 1;
+        }
+
+        intToString(day, dayString, 2);
+        dateStringUpdate = 1;
+      }
+      intToString(hours, hourString, 2);
+    }
+    intToString(minutes, minuteString, 2);
+  }
+  intToString(seconds, secondString, 2);
+  
   sprintf(time, "%s:%s:%s", hourString, minuteString, secondString);
+
+  if (dateStringUpdate) {
+    intToString(day, dayString, 2);
+    intToString(month, monthString, 2);
+    intToString(year, yearString, 4);
+
+    sprintf(date, "%s/%s/%s", dayString, monthString, yearString);
+  }
 }
 
-char* intToString(int nr, char retString[])
-{
-  int index = 1;
-  if (nr < 10)
+void changeSetupState() {
+  isInSetupState = (isInSetupState + 1) % 2;
+
+  // Reset the seconds
+  seconds = -1;
+
+  if (isInSetupState == 1)
   {
-    retString[0] = '0';
-    retString[index] = '0' + (nr % 10);
+    Timer1.stop();
   }
   else {
-    while (nr) {
-      retString[index] = '0' + (nr % 10);
-      nr = nr / 10;
-      index--;
-    }
+    Timer1.restart();
   }
-  retString[2] = '\0';
 }
 
-void clearCharPosition(int x0, int y0, int width, int height)
-{
-  tft.fillRect(x0, y0, width, height, ST77XX_BLACK);
-}
 
+// DISPLAY FUNCTIONS
+// ------------------
 void displayTimeAndDate() {
   // Clear the seconds position
   if (timeUpdateMask & 1)
@@ -177,6 +338,10 @@ void displayTimeAndDate() {
     clearCharPosition(time_text_position_x, time_text_position_y, font_width_pixels, font_height_pixels);
   }
 
+  if (dateStringUpdate) {
+    clearCharPosition(date_text_position_x, date_text_position_y, 128, font_height_pixels);
+  }
+
   tft.setCursor(time_text_position_x, time_text_position_y);
   tft.print(time);
 
@@ -186,6 +351,8 @@ void displayTimeAndDate() {
 
 void displayTemperature() {
   currentTemperature = dht.readTemperature();
+
+  // Update the temperature text line
   if (currentTemperature != pastTemperature) {
     pastTemperature = currentTemperature;
 
@@ -200,6 +367,8 @@ void displayTemperature() {
 
 void displayHumidity() {
   currentHumidity = dht.readHumidity();
+
+  // Update the humidity text line
   if (currentHumidity != pastHumidity)
   {
     pastHumidity = currentHumidity;
@@ -212,76 +381,34 @@ void displayHumidity() {
     tft.print("%");
   }
 }
+// ------------------
 
-void changeSetupState() {
-  inSetupState = (inSetupState + 1) % 2;
 
-  // Reset the seconds
-  seconds = -1;
+// UTILITY FUNCTIONS
+// ------------------
 
-  if (inSetupState == 1)
-  {
-    Timer1.stop();
+/// Convert int to string, starting from right to left
+/// and pad with '0' untile end
+char* intToString(int nr, char retString[], int stringSize)
+{
+  int index = stringSize - 1;
+  while (nr) {
+    retString[index] = '0' + (nr % 10);
+    nr = nr / 10;
+    index--;
   }
-  else {
-    Timer1.restart();
+
+  while (index >= 0) {
+    retString[index] = '0';
+    index--;
   }
+
+  retString[stringSize] = '\0';
 }
 
-void updateIncreaseMinutesButtonState() {
-  int increaseMinutesButtonReading = digitalRead(increaseMinutesPin);
-
-  if (increaseMinutesButtonReading != lastIncreaseMinutesButtonState) {
-    // reset the debouncing timer
-    lastDebounceTime = millis();
-  }
-
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (increaseMinutesButtonReading != increaseMinutesButtonState) {
-      increaseMinutesButtonState = increaseMinutesButtonReading;
-
-      if (increaseMinutesButtonState == HIGH) {
-        minutes = (minutes + 1) % 60;
-
-        intToString(minutes, minuteString);
-
-        /// Print the new time on the display
-        sprintf(time, "%s:%s:%s", hourString, minuteString, secondString);
-        clearCharPosition(0, time_text_position_y, 128, font_height_pixels);
-        tft.setCursor(time_text_position_x, time_text_position_y);
-        tft.print(time);
-      }
-    }
-  }
-
-  lastIncreaseMinutesButtonState = increaseMinutesButtonReading;
+void clearCharPosition(int x0, int y0, int width, int height)
+{
+  tft.fillRect(x0, y0, width, height, ST77XX_BLACK);
 }
 
-void updateIncreaseHourButtonState() {
-  int increaseHoursButtonReading = digitalRead(increaseHoursPin);
-
-  if (increaseHoursButtonReading != lastIncreaseHoursButtonState) {
-    // reset the debouncing timer
-    lastDebounceTime = millis();
-  }
-
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (increaseHoursButtonReading != increaseHoursButtonState) {
-      increaseHoursButtonState = increaseHoursButtonReading;
-
-      if (increaseHoursButtonState == HIGH) {
-        hours = (hours + 1) % 24;
-
-        intToString(hours, hourString);
-
-        // Print the new time on the display
-        sprintf(time, "%s:%s:%s", hourString, minuteString, secondString);
-        clearCharPosition(0, time_text_position_y, 128, font_height_pixels);
-        tft.setCursor(time_text_position_x, time_text_position_y);
-        tft.print(time);
-      }
-    }
-  }
-
-  lastIncreaseHoursButtonState = increaseHoursButtonReading;
-}
+// ------------------
